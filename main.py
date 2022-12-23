@@ -11,6 +11,7 @@ new_cars = []
 used_cars = []
 new_cars_links = []
 used_cars_links = []
+existing_columns = []
 
 def get_links_new(page=1):
     print(f'Extracting details from page {page}')
@@ -82,30 +83,44 @@ def extract_car_details_new(soup:BeautifulSoup)->None:
 
 def extract_car_details_used(url:str)->None:
     r = requests.get(url)
-    print(url)
     soup = BeautifulSoup(r.text,'lxml')
     text = str(soup.find('div',class_='hidden-desktop UnitDescWhatsapp'))
     car = {
     'id': url.split('/')[-1],
-    'price': int(soup.find('span',class_='usedUnitCarPrice').get_text().strip(' EGP').replace(',','')),}
+    }
+    try:
+        car['price']= int(soup.find('span',class_='usedUnitCarPrice').get_text().strip().strip(' EGP').replace(',',''))
+    except:
+        return
     if soup.find('strong',title="Installment"):
-        car['installment'] = int(soup.find('strong',title="Installment").get_text().strip().strip(' EGP').replace(',',''))
-        car['deposit'] = int(soup.find('strong',title="Deposit").get_text().strip(' EGP').replace(',',''))
+        try:
+            car['installment'] = int(soup.find('strong',title="Installment").get_text().strip().strip(' EGP').replace(',',''))
+        except:
+            pass
+        try:
+            car['deposit'] = int(soup.find('strong',title="Deposit").get_text().strip(' EGP').replace(',',''))
+        except:
+            pass    
     if re.findall(r'\+\d+',text):
-        car['phone number']= re.findall(r'\+\d+',text)[0]
+        car['phone_number']= re.findall(r'\+\d+',text)[0]
     details = soup.find_all('div',class_='DescDataItem')
     for detail in details:
         if detail.find(class_='DescDataSubTit'):
+            new_key = detail.find(class_='DescDataSubTit').get_text().strip().replace(' ','_')
+            if new_key not in existing_columns:
+                pgsql_add_column('used_cars',new_key)
+                existing_columns.append(new_key)
             car[detail.find(class_='DescDataSubTit').get_text().strip().lower()] = detail.find(class_='DescDataVal').get_text().strip()
     print(car['make']," ", car['model'])
-    used_cars.append(car)
+    #used_cars.append(car)
+    insert_pgsql_table_used('used_cars',car)
 
 
-def create_pgsql_table():
+def create_pgsql_table_new_cars():
     conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
     cursor=conn.cursor()
     
-    SQL ="""
+    SQL =f"""
 
     CREATE TABLE IF NOT EXISTS new_cars(
         id VARCHAR(50),
@@ -125,18 +140,69 @@ def create_pgsql_table():
     conn.close()
 
 
-def read_pgsql_table():
+def create_pgsql_table_used_cars():
     conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
     cursor=conn.cursor()
     
-    SQL ="""
+    SQL =f"""
 
-    SELECT * FROM new_cars;
+    CREATE TABLE IF NOT EXISTS used_cars(
+        id VARCHAR(50),
+        price INT,
+        phone_number VARCHAR(20),
+        installment INT,
+        deposit INT
+    );
+
+    """
+    cursor.execute(SQL)
+    conn.commit()
+    conn.close()
+
+
+
+def pgsql_add_column(table:str,column:str):
+    conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
+    cursor=conn.cursor()
+    
+    SQL =f"""
+
+    ALTER TABLE {table}
+    ADD COLUMN IF NOT EXISTS {column} VARCHAR(50)  
+    ;
+
+    """
+    cursor.execute(SQL)
+    conn.commit()
+    conn.close()
+
+
+def read_pgsql_table(table):
+    conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
+    cursor=conn.cursor()
+    
+    SQL =f"""
+
+    SELECT * FROM {table};
     """
     cursor.execute(SQL)
     result = cursor.fetchall()
     conn.close()
     print(result)
+
+
+def len_pgsql_table(table):
+    conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
+    cursor=conn.cursor()
+    
+    SQL =f"""
+
+    SELECT COUNT(*) FROM {table};
+    """
+    cursor.execute(SQL)
+    result = cursor.fetchall()
+    conn.close()
+    return result[0][0]
 
 
 def insert_pgsql_table(data):
@@ -156,13 +222,34 @@ def insert_pgsql_table(data):
     conn.commit()
     conn.close()
 
-def drop_pgsql_table():
+
+def insert_pgsql_table_used(table,data:dict):
+    conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
+    cursor=conn.cursor()
+    columns = tuple(data.keys())
+    values = tuple(data.values())
+
+    SQL =f"""
+
+    INSERT INTO {table} 
+    ({','.join([column.strip().replace(' ','_') for column in columns])})
+    VALUES {values} 
+    
+    ;
+    """
+    print('Values Inserted')
+    cursor.execute(SQL)
+    conn.commit()
+    conn.close()
+
+
+def drop_pgsql_table(table):
     conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
     cursor=conn.cursor()
     
     SQL =f"""
 
-    DROP TABLE new_cars
+    DROP TABLE {table}
     ;
     """
     cursor.execute(SQL)
@@ -182,8 +269,16 @@ if __name__ == '__main__':
     #get_links_used()
     #for link in used_cars_links:
     #    extract_car_details_used(link)
+    # with open ('usedcars.txt','r') as f:
+    #     x = len(f.readlines())//40 +1
+    # get_links_used(x)
+    # create_pgsql_table_used_cars()
+    saved =len_pgsql_table('used_cars')
+    print(saved)
     with open('usedcars.txt','r') as f:
+        for _ in range(saved+2):
+            next(f)
         for link in f:
-            extract_car_details_used(link)
-    
-    #pd.DataFrame(used_cars).to_csv('used_cars.csv')
+            print(link)
+            extract_car_details_used(link.strip())
+    #pd.DataFrame(used_cars).to_csv('used_cars.csv',index=False)
