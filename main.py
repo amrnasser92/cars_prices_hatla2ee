@@ -33,22 +33,25 @@ def get_links_used(page=1):
     url =f'https://eg.hatla2ee.com/en/car/page/{page}'
     r = requests.get(url)
     soup = BeautifulSoup(r.text,'lxml')
-    links =  soup.find_all('a',class_='nCarListData_title')
-    for link in links:
-        print(link)
-        used_cars_links.append(base_url + link.attrs['href'])   
+    cars = soup.find_all('div', class_='newCarListUnit_header')
+    for car in cars:
+        link = car.find('a')
+        print(link.attrs['href'])
+        #used_cars_links.append(base_url + link.attrs['href'])
+        with open('usedcars.txt','a') as f:
+            f.write(base_url +link.attrs['href']+'\n')   
     next_page = soup.find_all('a',class_='paginate')[-1].attrs['href'].split("/")[-1]
     if int(next_page)>int(page):    
         get_links_used(next_page)    
     else:
         print('No more pages')
-        print(f'Extracted {len(used_cars_links)} links')
+        #print(f'Extracted {len(used_cars_links)} links')
 
 
 def get_car_detail(url:str)->BeautifulSoup:
     r = requests.get(url)
     print(url)
-    return BeautifulSoup(r.text,'lxml')
+    return BeautifulSoup(r.text,'lxml'),url
 
 def extract_car_details_new(soup:BeautifulSoup)->None:
     if 'used' in soup.find('h1',class_='mainTitle').get_text().lower():
@@ -77,20 +80,24 @@ def extract_car_details_new(soup:BeautifulSoup)->None:
                 insert_pgsql_table(car)
 
 
-
-def extract_car_details_used(soup:BeautifulSoup)->None:
+def extract_car_details_used(url:str)->None:
+    r = requests.get(url)
+    print(url)
+    soup = BeautifulSoup(r.text,'lxml')
     text = str(soup.find('div',class_='hidden-desktop UnitDescWhatsapp'))
     car = {
-    'id': re.findall(r'\d+',text)[0],
-    'price': int(soup.find('span',class_='usedUnitCarPrice').get_text().strip(' EGP').replace(',','')),
-    'phone number': re.findall(r'\+\d+',text)[0]}
+    'id': url.split('/')[-1],
+    'price': int(soup.find('span',class_='usedUnitCarPrice').get_text().strip(' EGP').replace(',','')),}
     if soup.find('strong',title="Installment"):
         car['installment'] = int(soup.find('strong',title="Installment").get_text().strip().strip(' EGP').replace(',',''))
         car['deposit'] = int(soup.find('strong',title="Deposit").get_text().strip(' EGP').replace(',',''))
+    if re.findall(r'\+\d+',text):
+        car['phone number']= re.findall(r'\+\d+',text)[0]
     details = soup.find_all('div',class_='DescDataItem')
     for detail in details:
         if detail.find(class_='DescDataSubTit'):
             car[detail.find(class_='DescDataSubTit').get_text().strip().lower()] = detail.find(class_='DescDataVal').get_text().strip()
+    print(car['make']," ", car['model'])
     used_cars.append(car)
 
 
@@ -163,12 +170,20 @@ def drop_pgsql_table():
     conn.close()
 
 
-if __name__ == '__main__':
-    create_pgsql_table()
+def scrape_new():
     get_links_new()
     for link in new_cars_links:
         extract_car_details_new(get_car_detail(link))
-    pd.DataFrame(new_cars).to_csv('cars.csv')
-    read_pgsql_table()
+    pd.DataFrame(new_cars).to_csv('new_cars.csv')
 
 
+
+if __name__ == '__main__':
+    #get_links_used()
+    #for link in used_cars_links:
+    #    extract_car_details_used(link)
+    with open('usedcars.txt','r') as f:
+        for link in f:
+            extract_car_details_used(link)
+    
+    #pd.DataFrame(used_cars).to_csv('used_cars.csv')
