@@ -81,7 +81,7 @@ def extract_car_details_new(soup:BeautifulSoup)->None:
                 insert_pgsql_table(car)
 
 
-def extract_car_details_used(url:str)->None:
+async def extract_car_details_used(url:str)->None:
     r = requests.get(url)
     soup = BeautifulSoup(r.text,'lxml')
     text = str(soup.find('div',class_='hidden-desktop UnitDescWhatsapp'))
