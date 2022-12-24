@@ -113,7 +113,7 @@ async def extract_car_details_used(url:str)->None:
             car[detail.find(class_='DescDataSubTit').get_text().strip().lower()] = detail.find(class_='DescDataVal').get_text().strip()
     print(car['make']," ", car['model'])
     #used_cars.append(car)
-    insert_pgsql_table_used('used_cars',car)
+    await insert_pgsql_table_used('used_cars',car)
 
 
 def create_pgsql_table_new_cars():
@@ -223,7 +223,7 @@ def insert_pgsql_table(data):
     conn.close()
 
 
-def insert_pgsql_table_used(table,data:dict):
+async def insert_pgsql_table_used(table:str,data:dict):
     conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
     cursor=conn.cursor()
     columns = tuple(data.keys())
@@ -264,6 +264,14 @@ def scrape_new():
     pd.DataFrame(new_cars).to_csv('new_cars.csv')
 
 
+async def main():
+    saved =len_pgsql_table('used_cars')
+    with open('usedcars.txt','r') as f:
+        links = f.readlines()[saved+2:]
+    tasks = [await extract_car_details_used(link.strip()) for link in links]
+    asyncio.gather(*tasks)
+
+
 
 if __name__ == '__main__':
     #get_links_used()
@@ -273,12 +281,13 @@ if __name__ == '__main__':
     #     x = len(f.readlines())//40 +1
     # get_links_used(x)
     # create_pgsql_table_used_cars()
-    saved =len_pgsql_table('used_cars')
-    print(saved)
-    with open('usedcars.txt','r') as f:
-        for _ in range(saved+2):
-            next(f)
-        for link in f:
-            print(link)
-            extract_car_details_used(link.strip())
+    # saved =len_pgsql_table('used_cars')
+    # print(saved)
+    # with open('usedcars.txt','r') as f:
+    #     for _ in range(saved+2):
+    #         next(f)
+    #     for link in f:
+    #         print(link)
+    #         extract_car_details_used(link.strip())
     #pd.DataFrame(used_cars).to_csv('used_cars.csv',index=False)
+    #asyncio.run(main())
