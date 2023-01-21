@@ -1,2 +1,5 @@
 *.csv
 usedcars.txt
+db_info.json
+__pycache__
+log.txt
