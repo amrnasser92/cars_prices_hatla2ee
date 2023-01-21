@@ -1,5 +1,9 @@
 *.csv
+<<<<<<< HEAD
 usedcars.txt
 db_info.json
 __pycache__
 log.txt
+=======
+index.html
+>>>>>>> c172f92a6d5da7f29a8ede246f2a9f27a7b567d3
