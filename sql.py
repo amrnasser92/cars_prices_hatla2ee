@@ -15,7 +15,7 @@ def create_pgsql_table_new_cars()-> None:
     cursor = conn.cursor()
     SQL =f"""
     CREATE TABLE IF NOT EXISTS new_cars(
-        id VARCHAR(50),
+        id VARCHAR(50) UNIQUE,
         name VARCHAR(200),
         price INT,
         minimum_deposit INT,
@@ -38,7 +38,7 @@ def create_pgsql_table_used_cars() -> None:
     SQL =f"""
 
     CREATE TABLE IF NOT EXISTS used_cars(
-        id VARCHAR(50),
+        id VARCHAR(50) UNIQUE,
         price INT,
         phone_number VARCHAR(20),
         installment INT,

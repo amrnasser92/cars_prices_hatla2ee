@@ -11,35 +11,31 @@ logger = logging.getLogger()
 log = logging.FileHandler('log.txt','a')
 logger.addHandler(log)
 
-base_url = 'https://eg.hatla2ee.com'
-new_cars = []
-used_cars = []
-new_cars_links = []
-used_cars_links = []
-existing_columns = []
+existing_columns: list[str] = []
 
-def get_links_new(page=1):
+stored_links:list[str] = sql.read_links('used_cars_links') + sql.read_links('new_cars_links')
+base_url = 'https://eg.hatla2ee.com'
+
+def get_links_new(page=1)->None:
     logging.info('Getting new links')
-    # logging.info(f'Extracting details from page {page}')
     url =f'https://eg.hatla2ee.com/en/new-car/page/{page}'
     r = requests.get(url)
     logging.info(r.status_code)
     soup = BeautifulSoup(r.text,'lxml')
     links =  soup.find_all('a',class_='nCarListData_title')
     for link in links:
-        # new_cars_links.append(base_url + link.attrs['href'])   
         full_link = base_url + link.attrs['href']
         logging.info(full_link)
-        sql.insert_link('new_cars_links',link= full_link)
+        if full_link not in stored_links: 
+            sql.insert_link('new_cars_links',link= full_link)
     next_page = soup.find_all('a',class_='paginate')[-1].attrs['href'].split("/")[-1]
     if int(next_page)>int(page):    
         get_links_new(next_page)    
     else:
         logging.info('No more pages')
-        logging.info(f'Extracted {len(new_cars_links)} links')
 
 
-def get_links_used(page=1):
+def get_links_used(page=1)-> None:
     logging.info(f'Extracting details from page {page}')
     url =f'https://eg.hatla2ee.com/en/car/page/{page}'
     r = requests.get(url)
@@ -49,9 +45,8 @@ def get_links_used(page=1):
         link = car.find('a')
         full_link = base_url + link.attrs['href']
         logging.info(full_link)
-        sql.insert_link('used_cars_links',link=full_link)
-        # with open('usedcars.txt','a') as f:
-            # f.write(base_url +link.attrs['href']+'\n')   
+        if full_link not in stored_links:
+            sql.insert_link('used_cars_links',link=full_link)
     next_page = soup.find_all('a',class_='paginate')[-1].attrs['href'].split("/")[-1]
     if int(next_page)>int(page):    
         get_links_used(next_page)    
@@ -87,7 +82,6 @@ def extract_car_details_new(soup:BeautifulSoup)->None:
                     'make': details[0].find('a').attrs['href'].split('/')[-3].title(),
                     'model': details[0].find('a').attrs['href'].split('/')[-2].title(),
                 }
-                new_cars.append(car)
                 sql.insert_pgsql_table(car)
 
 
@@ -125,8 +119,6 @@ def extract_car_details_used(url:str)->None:
     sql.insert_pgsql_table_used('used_cars',car)
 
 if __name__ == '__main__':
-    sql.create_pgsql_table_new_cars_links()
-    sql.create_pgsql_table_used_cars_links()
     get_links_new()
     get_links_used()
     extract_car_details_new(sql.read_link('new_cars_links',1))
