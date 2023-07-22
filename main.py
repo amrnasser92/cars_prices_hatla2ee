@@ -5,6 +5,11 @@ import re
 import sqlalchemy
 import asyncio
 import psycopg2
+import httpx
+import psycopg
+
+
+
 
 base_url = 'https://eg.hatla2ee.com'
 new_cars = []
@@ -12,6 +17,36 @@ used_cars = []
 new_cars_links = []
 used_cars_links = []
 existing_columns = []
+
+client = httpx.AsyncClient(timeout=None)
+
+
+async def get_links_new_async(page=1):
+    print(f'Extracting details from page {page}')
+    url =f'https://eg.hatla2ee.com/en/new-car/page/{page}'
+
+    r = await client.get(url)
+    soup = BeautifulSoup(r.text,'lxml')
+    links = soup.find_all('a',class_='nCarListData_title')
+    for link in links:
+        new_cars_links.append(base_url + link.attrs['href'])   
+    # next_page = soup.find_all('a',class_='paginate')[-1].attrs['href'].split("/")[-1]
+    # if int(next_page)>int(page):    
+        # get_links_new(next_page)    
+    # else:
+        # print('No more pages')
+        # print(f'Extracted {len(new_cars_links)} links')
+
+
+async def get_last_page():
+    url ='https://eg.hatla2ee.com/en/new-car/page/1'
+
+    r = await client.get(url)
+    soup = BeautifulSoup(r.text,'lxml')
+    pagination = soup.find('div',class_='pagination')
+    pages = pagination.find_all('a',class_='paginate')
+    return max([int(page.get_text().strip()) for page in pages if 'Next' not in page.get_text().strip()] )
+
 
 def get_links_new(page=1):
     print(f'Extracting details from page {page}')
@@ -49,36 +84,45 @@ def get_links_used(page=1):
         #print(f'Extracted {len(used_cars_links)} links')
 
 
-def get_car_detail(url:str)->BeautifulSoup:
-    r = requests.get(url)
+async def get_car_detail(url:str)->BeautifulSoup:
+    r = await client.get(url)
     print(url)
-    return BeautifulSoup(r.text,'lxml'),url
+    return BeautifulSoup(r.text,'lxml')
 
-def extract_car_details_new(soup:BeautifulSoup)->None:
-    if 'used' in soup.find('h1',class_='mainTitle').get_text().lower():
-        print('Used car')
-        return
-    tables = soup.find('div',class_='newCarPricesWrap').find_all('tbody')
-    car_name = soup.find('h2',class_='brandCarTitle').get_text().strip()
-    print(car_name)
-    for table in tables:
-        models = table.find_all('tr')
-        for model in models:
-            details = model.find_all('td')
-            if details:
-                car = {
-                    'id': details[0].find('a').attrs['id'],
-                    'name': details[0].get_text().strip(),
-                    'price': int(details[1].get_text().strip().replace(' EGP','').replace(',','')) if not details[1].find('del') else int(details[1].find_all('strong')[-1].get_text().strip().replace(' EGP','').replace(',','')),
-                    'minimum_deoposit': int(details[2].get_text().strip().replace(' EGP','').replace(',','')),
-                    'minimum_installment': int(details[3].get_text().strip().replace(' EGP','').replace(',','')),
-                    'CC': details[4].get_text().strip(),
-                    'link': details[0].find('a').attrs['href'],
-                    'make': details[0].find('a').attrs['href'].split('/')[-3].title(),
-                    'model': details[0].find('a').attrs['href'].split('/')[-2].title(),
-                }
-                new_cars.append(car)
-                insert_pgsql_table(car)
+async def extract_car_details_new(link:str)->None:
+      try:
+            soup = await get_car_detail(link)
+            if not soup.find('h1'):
+                  soup = await extract_car_details_new(link)
+            if 'used' in soup.find('h1').get_text().lower():
+                  print('Used car')
+            tables = soup.find('div',class_='newCarPricesWrap').find_all('tbody')
+            car_name = soup.find('h2',class_='brandCarTitle').get_text().strip()
+            pattern = r'\d+,\d+'
+            print(car_name)
+            for table in tables:
+                  models = table.find_all('tr')
+                  for model in models:
+                        details = model.find_all('td')
+                  #   result = re.match(pattern, details[2].get_text().strip())
+                  #   print(result)
+                        if details:
+                              car = {
+                        'id': details[0].find('a').attrs['id'],
+                        'name': details[0].get_text().strip(),
+                        'price': int(details[1].get_text().strip().replace(' EGP','').replace(',','')) if not details[1].find('del') else int(details[1].find_all('strong')[-1].get_text().strip().replace(' EGP','').replace(',','')),
+                        'minimum_deoposit': int(re.match(pattern, details[2].get_text().strip())[0].replace(',','')) if re.match(pattern, details[2].get_text().strip()) else 0,
+                        'minimum_installment': int(details[3].get_text().strip().replace(' EGP','').replace(',','')),
+                        'CC': details[4].get_text().strip(),
+                        'link': details[0].find('a').attrs['href'],
+                        'make': details[0].find('a').attrs['href'].split('/')[-3].title(),
+                        'model': details[0].find('a').attrs['href'].split('/')[-2].title(),
+                  }
+                  # new_cars.append(car)
+                              await insert_pgsql_table(car)
+      except Exception as e:
+           print(e)
+        #    await extract_car_details_new(link)
 
 
 async def extract_car_details_used(url:str)->None:
@@ -116,29 +160,25 @@ async def extract_car_details_used(url:str)->None:
     await insert_pgsql_table_used('used_cars',car)
 
 
-def create_pgsql_table_new_cars():
-    conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
-    cursor=conn.cursor()
-    
-    SQL =f"""
+async def create_pgsql_table_new_cars():
+      async with await psycopg.AsyncConnection.connect("dbname=cars user=postgres password=Amr") as conn:
+            async with conn.cursor() as cursor:
+                  await cursor.execute(f"""
 
-    CREATE TABLE IF NOT EXISTS new_cars(
-        id VARCHAR(50),
-        name VARCHAR(200),
-        price INT,
-        minimum_deposit INT,
-        minimum_installment INT,
-        CC VARCHAR(50),
-        link VARCHAR(100),
-        make VARCHAR(50),
-        model VARCHAR(50)
-    );
+            CREATE TABLE IF NOT EXISTS new_cars_async(
+                  id VARCHAR(50),
+                  name VARCHAR(200),
+                  price INT,
+                  minimum_deposit INT,
+                  minimum_installment INT,
+                  CC VARCHAR(50),
+                  link VARCHAR(100),
+                  make VARCHAR(50),
+                  model VARCHAR(50)
+            );
 
     """
-    cursor.execute(SQL)
-    conn.commit()
-    conn.close()
-
+                  )
 
 def create_pgsql_table_used_cars():
     conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
@@ -205,22 +245,16 @@ def len_pgsql_table(table):
     return result[0][0]
 
 
-def insert_pgsql_table(data):
-    conn = psycopg2.connect(database='cars',user='postgres',password='Amr')
-    cursor=conn.cursor()
-    values = tuple([data[column] for column in data])
+async def insert_pgsql_table(data):
+      values = tuple([data[column] for column in data])
+      async with await psycopg.AsyncConnection.connect("dbname=cars user=postgres password=Amr") as conn:
+            async with conn.cursor() as cursor:
+                  await cursor.execute(f"""
 
-    SQL =f"""
-
-    INSERT INTO new_cars
-    VALUES {values} 
-    
-    ;
-    """
-    print('Values Inserted')
-    cursor.execute(SQL)
-    conn.commit()
-    conn.close()
+                  INSERT INTO new_cars_async
+                        VALUES {values} ;
+                        """)
+                  
 
 
 async def insert_pgsql_table_used(table:str,data:dict):
@@ -257,37 +291,35 @@ def drop_pgsql_table(table):
     conn.close()
 
 
-def scrape_new():
-    get_links_new()
-    for link in new_cars_links:
-        extract_car_details_new(get_car_detail(link))
-    pd.DataFrame(new_cars).to_csv('new_cars.csv')
+# def scrape_new():
+#     get_links_new()
+#     for link in new_cars_links:
+#         extract_car_details_new(get_car_detail(link))
+#     pd.DataFrame(new_cars).to_csv('new_cars.csv')
 
+
+async def scrape_new():
+    for link in new_cars_links:
+      car_details = [get_car_detail(link) for link in new_cars_links ]
+      return await asyncio.gather(extract_car_details_new(*car_details))
+      # extract_car_details_new(get_car_detail(link))
+      # pd.DataFrame(new_cars).to_csv('new_cars.csv')
+
+
+# async def main():
+#     saved =len_pgsql_table('used_cars')
+#     with open('usedcars.txt','r') as f:
+#         links = f.readlines()[saved+2:]
+#     tasks = [await extract_car_details_used(link.strip()) for link in links]
+#     asyncio.gather(*tasks)
 
 async def main():
-    saved =len_pgsql_table('used_cars')
-    with open('usedcars.txt','r') as f:
-        links = f.readlines()[saved+2:]
-    tasks = [await extract_car_details_used(link.strip()) for link in links]
-    asyncio.gather(*tasks)
-
-
+      await asyncio.gather(*[get_links_new_async(i) for i in range(1,await get_last_page() +1 )])
+      await asyncio.gather(*[extract_car_details_new(link) for link in new_cars_links ] )
+     
 
 if __name__ == '__main__':
-    #get_links_used()
-    #for link in used_cars_links:
-    #    extract_car_details_used(link)
-    # with open ('usedcars.txt','r') as f:
-    #     x = len(f.readlines())//40 +1
-    # get_links_used(x)
-    # create_pgsql_table_used_cars()
-    # saved =len_pgsql_table('used_cars')
-    # print(saved)
-    # with open('usedcars.txt','r') as f:
-    #     for _ in range(saved+2):
-    #         next(f)
-    #     for link in f:
-    #         print(link)
-    #         extract_car_details_used(link.strip())
-    #pd.DataFrame(used_cars).to_csv('used_cars.csv',index=False)
-    #asyncio.run(main())
+      asyncio.run(create_pgsql_table_new_cars())
+      asyncio.run(main())
+    #   print(len(new_cars_links))
+    # asyncio.run(get_last_page())
